@@ -23,7 +23,7 @@ DEFAULT_HISTORY_VERBOSITY = 'info'
 
 def main(filepaths=None, layout='default', instrument=None, browser='default',
          theme='light', verbosity=DEFAULT_VERBOSITY, history_verbosity=DEFAULT_HISTORY_VERBOSITY,
-         hotreload=False):
+         hotreload=False, shutdown_timeout=None):
     """
     Start a Jdaviz application instance with data loaded from FILENAME.
 
@@ -110,6 +110,8 @@ def main(filepaths=None, layout='default', instrument=None, browser='default',
         if browser != 'default':
             Voila.browser = browser
         sys.exit(Voila().launch_instance(argv=[]))
+        if shutdown_timeout is not None:
+            VoilaConfiguration.shutdown_no_activity_timeout = shutdown_timeout
     finally:
         os.chdir(start_dir)
 
@@ -138,6 +140,8 @@ def _main(config=None):
                         help='Verbosity of the application for popup snackbars.')
     parser.add_argument('--history-verbosity', choices=_verbosity_levels, default='info',
                         help='Verbosity of the logger history.')
+    parser.add_argument('--shutdown_timeout', type=int, default=None,
+                        help='Shutdown the server.....')
     if sys.version_info >= (3, 9):
         # Also enables --no-hotreload
         parser.add_argument('--hotreload', action=argparse.BooleanOptionalAction, default=False,
@@ -155,7 +159,7 @@ def _main(config=None):
 
     main(filepaths=args.filepaths, layout=layout, instrument=args.instrument, browser=args.browser,
          theme=args.theme, verbosity=args.verbosity, history_verbosity=args.history_verbosity,
-         hotreload=args.hotreload)
+         hotreload=args.hotreload, shutdown_timeout=args.shutdown_timeout)
 
 
 def _specviz():
