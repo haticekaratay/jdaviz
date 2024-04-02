@@ -109,9 +109,16 @@ def main(filepaths=None, layout='default', instrument=None, browser='default',
         VoilaConfiguration.theme = theme
         if browser != 'default':
             Voila.browser = browser
-        sys.exit(Voila().launch_instance(argv=[]))
         if shutdown_timeout is not None:
-            VoilaConfiguration.shutdown_no_activity_timeout = shutdown_timeout
+            from jupyter_server.extension.application import ServerApp
+            from jupyter_server.services.kernels.kernelmanager import MappingKernelManager
+            ServerApp.shutdown_no_activity_timeout = shutdown_timeout
+            # MappingKernelManager.cull_idle_timeout = shutdown_timeout / 2
+            # MappingKernelManager.cull_interval = shutdown_timeout / 10
+            # MappingKernelManager.cull_connected = True
+            # import os, signal
+            # os.kill(os.getppid(), signal.SIGKILL)
+        sys.exit(Voila().launch_instance(argv=[]))
     finally:
         os.chdir(start_dir)
 
