@@ -154,6 +154,7 @@ class Footprints(PluginTemplateMixin, ViewerSelectMixin, HasFileImportSelect):
 
     def __init__(self, *args, **kwargs):
         self._ignore_traitlet_change = False
+        self._highlighted_overlay = None
         self._overlays = {}
 
         super().__init__(*args, **kwargs)
@@ -214,6 +215,28 @@ class Footprints(PluginTemplateMixin, ViewerSelectMixin, HasFileImportSelect):
                            handler=self._on_select_footprint_overlay)
         self._on_link_type_updated()
 
+    def _highlight_overlay(self, overlay_label, viewers=None, color='lime', stroke_width=2, reset_width=1):
+        """
+        Visually highlight one overlay by changing mark color and thickness,
+        without affecting plugin traitlets or stored overlay color.
+        """
+        self._highlighted_overlay = overlay_label
+
+        if viewers is None:
+            viewers = self.viewer.selected_obj
+            if not isinstance(viewers, list):
+                viewers = [viewers]
+
+        for viewer in viewers:
+            for mark in self._get_marks(viewer):
+                if mark.overlay == overlay_label:
+                    mark.stroke_width = stroke_width
+                    mark.colors = [color]
+                else:
+                    mark.stroke_width = reset_width
+                    stored_color = self._overlays.get(mark.overlay, {}).get('color', self.color)
+                    mark.colors = [stored_color]
+
     def _on_select_footprint_overlay(self, data):
         click_x, click_y = data.x, data.y
         viewers = self.viewer.selected_obj if isinstance(self.viewer.selected_obj, list) else [
@@ -231,6 +254,7 @@ class Footprints(PluginTemplateMixin, ViewerSelectMixin, HasFileImportSelect):
         closest_overlay_label, closest_point = find_closest_polygon_point(
             click_x, click_y, overlay_data)
         self.overlay_selected = closest_overlay_label
+        self._highlight_overlay(closest_overlay_label, viewers=viewers)
 
     @property
     def user_api(self):
@@ -464,6 +488,7 @@ class Footprints(PluginTemplateMixin, ViewerSelectMixin, HasFileImportSelect):
                 self.center_on_viewer(self.viewer.selected[0])
 
         fp = self._overlays[overlay_selected]
+        self.color = fp.get('color', self.color)
 
         # we'll temporarily disable updating the overlays so that we can set all
         # traitlets simultaneously (and since we're only updating traitlets to a previously-set
