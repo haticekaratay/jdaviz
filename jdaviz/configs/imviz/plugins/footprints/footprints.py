@@ -2,7 +2,9 @@ from traitlets import Bool, List, Unicode, observe
 import numpy as np
 import os
 import regions
+import json
 
+from astroquery.mast import MastMissions
 from glue.core.message import DataCollectionAddMessage, DataCollectionDeleteMessage
 from glue_jupyter.common.toolbar_vuetify import read_icon
 
@@ -15,11 +17,15 @@ from jdaviz.core.region_translators import is_stcs_string, regions2roi, stcs_str
 from jdaviz.core.registries import tray_registry
 from jdaviz.core.template_mixin import (PluginTemplateMixin, ViewerSelectMixin,
                                         EditableSelectPluginComponent, SelectPluginComponent,
-                                        FileImportSelectPluginComponent, HasFileImportSelect)
+                                        FileImportSelectPluginComponent, HasFileImportSelect,
+                                        TableMixin)
 from jdaviz.core.tools import ICON_DIR
 from jdaviz.core.user_api import PluginUserApi
 
 from jdaviz.configs.imviz.plugins.footprints import preset_regions
+from regions import PolygonSkyRegion
+from astropy.coordinates import SkyCoord
+import astropy.units as u
 
 
 __all__ = ['Footprints']
@@ -114,7 +120,7 @@ def find_closest_polygon_point(px, py, polygons):
 
 
 @tray_registry('imviz-footprints', label="Footprints")
-class Footprints(PluginTemplateMixin, ViewerSelectMixin, HasFileImportSelect):
+class Footprints(PluginTemplateMixin, ViewerSelectMixin, HasFileImportSelect, TableMixin):
     """
     See the :ref:`Footprints Plugin Documentation <imviz-footprints>` for more details.
 
@@ -244,6 +250,11 @@ class Footprints(PluginTemplateMixin, ViewerSelectMixin, HasFileImportSelect):
 
         # set the custom file parser for importing catalogs
         self.preset._file_parser = self._file_parser
+        self.table.headers_avail = ['obs_id', 'instrument', 'filters', 'level', 'type', 's_region']
+        self.table.headers_visible = self.table.headers_avail
+        self.table._selected_rows_changed_callback = self._on_table_selection_changed
+
+        # self.table.show_rowselect = True
 
         # disable if pixel-linked AND only a single item in the data collection
         self.hub.subscribe(self, LinkUpdatedMessage, handler=self._on_link_type_updated)
@@ -253,6 +264,90 @@ class Footprints(PluginTemplateMixin, ViewerSelectMixin, HasFileImportSelect):
         self.hub.subscribe(self, FootprintSelectClickEventMessage,
                            handler=self._on_select_footprint_overlay)
         self._on_link_type_updated()
+
+    def load_associated_footprints(self, fileset_names):
+        print("Called load_associated_footprints")
+        missions = MastMissions(mission="JWST")
+
+        # Query using fileSetName (this is what works)
+        query_str = ",".join(fileset_names)
+        obs = missions.query_criteria(fileSetName=query_str)
+        print(f"Query returned {len(obs)} results")
+
+        self._l2_obs = obs
+        self.populate_contributors_table(obs)
+
+    def load_from_association_file(self, path):
+        print("called load_from_association_file ")
+        with open(path) as f:
+            asn = json.load(f)
+
+        associated_filenames = [
+            member["expname"]
+            for product in asn["products"]
+            for member in product["members"]
+            if member.get("exptype") == "science"
+        ]
+
+        def to_file_set_name(filename):
+            return filename.split("_nrc")[0]
+
+        fileset_names = [to_file_set_name(f) for f in associated_filenames]
+        print("file_set_names: ", fileset_names)
+        self.load_associated_footprints(fileset_names)
+
+    def populate_contributors_table(self, obs_table):
+        print("Called the populate_contributors_table")
+        self.clear_table()
+
+        self.table.headers_avail = ['obs_id', 'instrument', 'filters', 'level', 'type']
+        self.table.headers_visible = self.table.headers_avail
+        self.table.item_key = 'obs_id'
+        self.table.show_rowselect = True
+        self.table.multiselect = True
+
+        self.table._default_values_by_colname = {
+            'obs_id': '',
+            'instrument': '',
+            'filters': '',
+            'level': '',
+            'type': '',
+            's_region': ''
+        }
+
+        for row in obs_table:
+            self.table.add_item({
+                "obs_id": row.get("fileSetName", ""),
+                "instrument": row.get("instrume", ""),
+                "filters": row.get("opticalElements", ""),
+                "level": row.get("calib_level", ""),
+                "type": row.get("exp_type", ""),
+                "s_region": row.get("s_region", "")
+            })
+
+    def vue_load_l2_contributors(self, *args):
+        print("this is called")
+        self.load_from_association_file(
+            "MAST/JWST/jw02731-o001_20250410t003255_image3_00001_asn.json")
+
+    def _on_table_selection_changed(self, msg=None):
+        for lbl in list(self.overlay.choices):
+            if lbl.startswith("L2 from "):
+                self.remove_overlay(lbl)
+
+        for row in self.table.selected_rows:
+            obs_id = row.get("obs_id")
+            s_region = row.get("s_region")
+            if s_region:
+                region = stcs_string2region(s_region)
+                overlay_label = f"L2 from {obs_id}"
+
+                if overlay_label not in self.overlay.choices:
+                    self.add_overlay(overlay_label)
+
+                # Select the overlay, then import into it
+                self.overlay_selected = overlay_label
+                self.import_region(region)
 
     def _highlight_overlay(self, overlay_label, viewers=None):
         """

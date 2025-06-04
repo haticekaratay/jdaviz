@@ -120,6 +120,24 @@
       >
         <g-file-import id="file-uploader"></g-file-import>
       </plugin-file-import-select>
+          <!-- New L2 Contributors section -->
+        <v-row>
+          <v-col>
+            <h3 class="text-h6">L2 Contributors</h3>
+            <p class="text-body-2">Select individual L2 footprints to view them on the viewer.</p>
+            <jupyter-widget :widget="table_widget" />
+          </v-col>
+        </v-row>
+        <v-col>
+        <v-row>
+          <plugin-action-button
+            :results_isolated_to_plugin="true"
+            @click="load_l2_contributors"
+            :spinner="spinner"
+          >
+            Load L2 Contributors
+          </plugin-action-button>
+        </v-row>
 
       <div v-if="preset_selected !== 'From File...' && preset_selected !== 'None'">
         <v-row>
