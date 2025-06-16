@@ -18,7 +18,7 @@ from jdaviz.core.registries import tray_registry
 from jdaviz.core.template_mixin import (PluginTemplateMixin, ViewerSelectMixin,
                                         EditableSelectPluginComponent, SelectPluginComponent,
                                         FileImportSelectPluginComponent, HasFileImportSelect,
-                                        TableMixin)
+                                        TableMixin, with_spinner)
 from jdaviz.core.tools import ICON_DIR
 from jdaviz.core.user_api import PluginUserApi
 
@@ -265,36 +265,6 @@ class Footprints(PluginTemplateMixin, ViewerSelectMixin, HasFileImportSelect, Ta
                            handler=self._on_select_footprint_overlay)
         self._on_link_type_updated()
 
-    def load_associated_footprints(self, fileset_names):
-        print("Called load_associated_footprints")
-        missions = MastMissions(mission="JWST")
-
-        # Query using fileSetName (this is what works)
-        query_str = ",".join(fileset_names)
-        obs = missions.query_criteria(fileSetName=query_str)
-        print(f"Query returned {len(obs)} results")
-
-        self._l2_obs = obs
-        self.populate_contributors_table(obs)
-
-    def load_from_association_file(self, path):
-        print("called load_from_association_file ")
-        with open(path) as f:
-            asn = json.load(f)
-
-        associated_filenames = [
-            member["expname"]
-            for product in asn["products"]
-            for member in product["members"]
-            if member.get("exptype") == "science"
-        ]
-
-        def to_file_set_name(filename):
-            return filename.split("_nrc")[0]
-
-        fileset_names = [to_file_set_name(f) for f in associated_filenames]
-        print("file_set_names: ", fileset_names)
-        self.load_associated_footprints(fileset_names)
 
     def populate_contributors_table(self, obs_table):
         print("Called the populate_contributors_table")
@@ -325,14 +295,78 @@ class Footprints(PluginTemplateMixin, ViewerSelectMixin, HasFileImportSelect, Ta
                 "s_region": row.get("s_region", "")
             })
 
+    @with_spinner('spinner')
     def vue_load_l2_contributors(self, *args):
-        print("this is called")
-        self.load_from_association_file(
-            "MAST/JWST/jw02731-o001_20250410t003255_image3_00001_asn.json")
+        # self.load_from_association_file(
+        #     "mast1/jw02731-o001_20250607t132845_image3_00004_asn.json")
+        import json
+        import numpy as np
+        import os
+        from astroquery.mast import MastMissions
+        from jdaviz.core.region_translators import stcs_string2region
+
+        # Get center coordinate from viewer
+        try:
+            viewer = self.app.get_viewer(self.viewer.selected[0])
+            center_coord = viewer._get_center_skycoord()
+        except Exception as e:
+            return
+
+        jwst_mission = MastMissions(mission="jwst")
+
+        # Query region to get L3
+        obs = jwst_mission.query_region(center_coord, radius=0.1)
+        if len(obs) < 1:
+            print("No observations found near center.")
+            return
+        l3 = obs[-2]
+        # Download ASN file
+        # jwst_mission.download_products(l3["fileSetName"], flat=True, download_dir="mast1")
+        if 's_region' in l3.colnames and l3['s_region']:
+            print("L3 s_region:", l3["s_region"])
+            try:
+                s_region_str = str(l3["s_region"]).strip()
+                if s_region_str:
+                    print("Parsing s_region:", s_region_str)
+                    l3_regions = stcs_string2region(s_region_str)
+                    overlay_label = f"L3: {l3['fileSetName']}"
+                    if overlay_label not in self.overlay.choices:
+                        self.add_overlay(overlay_label)
+                    self.overlay_selected = overlay_label
+                    self.import_region(l3_regions)
+            except Exception as e:
+                print("Could not add L3 overlay:", e)
+        # Load ASN JSON
+        asn_path = None
+        for fname in os.listdir("mast1"):
+            if fname.endswith("_asn.json"):
+                asn_path = os.path.join("mast1", fname)
+                print("Found ASN file:", asn_path)
+                break
+
+        if not asn_path:
+            print("No ASN file found in mast1")
+            return
+
+        with open(asn_path, "r") as f:
+            data = json.load(f)
+
+        associated_L2s = [x["expname"] for x in data["products"][0]["members"]]
+        associated_L2s = ["_".join(f.split("_")[:3]) for f in associated_L2s]
+
+        # Query broader region to get L2s
+        followup_results = jwst_mission.query_region(center_coord, radius=5)
+        filtered = followup_results[followup_results["productLevel"] != "3"]
+        mask = np.isin(filtered["fileSetName"], associated_L2s)
+        filtered_data = filtered[mask]
+
+        print(f"Found {len(filtered_data)} L2 matches out of {len(associated_L2s)} associated")
+        self._l2_obs = filtered_data
+        self.populate_contributors_table(filtered_data)
 
     def _on_table_selection_changed(self, msg=None):
         for lbl in list(self.overlay.choices):
-            if lbl.startswith("L2 from "):
+            if lbl.startswith("L2 from ") or lbl == "default":
                 self.remove_overlay(lbl)
 
         for row in self.table.selected_rows:
